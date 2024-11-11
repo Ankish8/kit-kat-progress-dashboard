@@ -1,5 +1,7 @@
-import KitKatStudentTable from "@/components/components-kit-kat-student-table"
+'use client'
 
-export default function Page() {
-  return <KitKatStudentTable />
+import NavLayout from '@/components/layouts/nav-layout'
+
+export default function Home() {
+  return <NavLayout />
 }

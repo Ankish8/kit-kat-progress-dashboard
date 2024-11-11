@@ -6,6 +6,8 @@ import { Search, Candy, Flame, ChevronUp, ChevronDown, Filter, Crown, IceCream, 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
+import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Table,
@@ -40,15 +42,24 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 
+interface Props {
+  searchTerm: string;
+  filterConfig: {
+    minKitKatPoints: number;
+    minStreak: number;
+    minXP: number;
+  };
+}
 interface Student {
-  id: number
-  name: string
-  kitKatPoints: number
-  xp: number
-  streak: number
-  lastAttendance: Date | null
-  avatar: string
-  previousRank?: number
+  id: number;
+  name: string;
+  kitKatPoints: number;
+  xp: number;
+  streak: number;
+  lastAttendance: string | null;  // Change from Date to string since Supabase returns ISO string
+  avatar: string;
+  previousRank?: number;
+  created_at?: string;  // Add this as it's in your database
 }
 
 const MAX_MULTIPLIER = 5
@@ -60,12 +71,12 @@ const calculateMultiplier = (streak: number) => streak === 0 ? 1 : Math.min(1 + 
 type SortField = 'name' | 'kitKatPoints' | 'streak' | 'multiplier' | 'xp'
 type SortOrder = 'asc' | 'desc'
 
-const getKitKatPointColor = (points: number, isDarkMode: boolean) => {
-  if (points < 1) return isDarkMode ? 'text-gray-300' : 'text-gray-800'
-  if (points < 3) return isDarkMode ? 'text-blue-300' : 'text-blue-800'
-  if (points < 5) return isDarkMode ? 'text-green-300' : 'text-green-800'
-  if (points < 10) return isDarkMode ? 'text-yellow-300' : 'text-yellow-800'
-  return isDarkMode ? 'text-red-300' : 'text-red-800'
+const getKitKatPointColor = (points: number) => {
+  if (points < 1) return 'text-gray-800'
+  if (points < 3) return 'text-blue-800'
+  if (points < 5) return 'text-green-800'
+  if (points < 10) return 'text-yellow-800'
+  return 'text-red-800'
 }
 
 const getCandyIcon = (points: number) => {
@@ -76,19 +87,11 @@ const getCandyIcon = (points: number) => {
   return <Candy className="h-4 w-4 text-red-500" />
 }
 
-const StudentTable: React.FC = () => {
-  const [students, setStudents] = useState<Student[]>([
-    { id: 1, name: "Alice Johnson", kitKatPoints: 0, xp: 0, streak: 0, lastAttendance: null, avatar: "/placeholder.svg?height=40&width=40" },
-    { id: 2, name: "Bob Smith", kitKatPoints: 0, xp: 0, streak: 0, lastAttendance: null, avatar: "/placeholder.svg?height=40&width=40" },
-    { id: 3, name: "Charlie Davis", kitKatPoints: 0, xp: 0, streak: 0, lastAttendance: null, avatar: "/placeholder.svg?height=40&width=40" },
-    { id: 4, name: "Diana Evans", kitKatPoints: 0, xp: 0, streak: 0, lastAttendance: null, avatar: "/placeholder.svg?height=40&width=40" },
-    { id: 5, name: "Ethan Foster", kitKatPoints: 0, xp: 0, streak: 0, lastAttendance: null, avatar: "/placeholder.svg?height=40&width=40" }
-  ])
-  const [searchTerm, setSearchTerm] = useState('')
+const StudentTable: React.FC<Props> = ({ searchTerm, filterConfig }) => {
+  const [students, setStudents] = useState<Student[]>([])
   const [showAnimation, setShowAnimation] = useState<{ id: number, change: number } | null>(null)
   const [selectedStudents, setSelectedStudents] = useState<number[]>([])
   const [sortConfig, setSortConfig] = useState<{ field: SortField, order: SortOrder }>({ field: 'xp', order: 'desc' })
-  const [filterConfig, setFilterConfig] = useState({ minKitKatPoints: 0, minStreak: 0, minXP: 0 })
   const [isAnimating, setIsAnimating] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [focusedStudentIndex, setFocusedStudentIndex] = useState(-1)
@@ -96,41 +99,91 @@ const StudentTable: React.FC = () => {
   const [isNavigating, setIsNavigating] = useState(false)
   const [bulkActionLoading, setBulkActionLoading] = useState<string | null>(null)
   const [undoStack, setUndoStack] = useState<Student[][]>([])
-  const [isDarkMode, setIsDarkMode] = useState(false)
+
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const supabase = createClientComponentClient()
+
+  useEffect(() => {
+    const fetchStudents = async () => {
+      console.log('Fetching students...');
+      const { data, error } = await supabase
+        .from('students')
+        .select('*')
+        .order('xp', { ascending: false });
+      
+      if (error) {
+        console.error('Error fetching students:', error);
+        return;
+      }
+  
+      if (data) {
+        console.log('Fetched students:', data);
+        setStudents(data);
+      } else {
+        console.log('No data returned');
+      }
+    };
+  
+    fetchStudents();
+  }, [supabase]);
+
 
   const filteredStudents = useMemo(() => {
-    return students
-      .filter(student =>
-        student.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
-        student.kitKatPoints >= filterConfig.minKitKatPoints &&
-        student.streak >= filterConfig.minStreak &&
-        student.xp >= filterConfig.minXP
-      )
-      .sort((a, b) => {
-        const { field, order } = sortConfig
-        let comparison = 0
-        if (field === 'name') {
-          comparison = a.name.localeCompare(b.name)
-        } else if (field === 'kitKatPoints') {
-          comparison = a.kitKatPoints - b.kitKatPoints
-        } else if (field === 'streak') {
-          comparison = a.streak - b.streak
-        } else if (field === 'multiplier') {
-          comparison = calculateMultiplier(a.streak) - calculateMultiplier(b.streak)
-        } else if (field === 'xp') {
-          comparison = a.xp - b.xp
-        }
-        return order === 'asc' ? comparison : -comparison
-      })
-  }, [students, searchTerm, sortConfig, filterConfig])
+    console.log('Current students:', students);
+    console.log('Search term:', searchTerm);
+    console.log('Filter config:', filterConfig);
+    console.log('Sort config:', sortConfig);
+  
+    const filtered = students.filter(student => {
+      const nameMatch = student.name.toLowerCase().includes(searchTerm.toLowerCase());
+      const kitKatMatch = student.kitKatPoints >= filterConfig.minKitKatPoints;
+      const streakMatch = student.streak >= filterConfig.minStreak;
+      const xpMatch = student.xp >= filterConfig.minXP;
+  
+      console.log('Student:', student.name);
+      console.log('- Name match:', nameMatch);
+      console.log('- KitKat match:', kitKatMatch);
+      console.log('- Streak match:', streakMatch);
+      console.log('- XP match:', xpMatch);
+  
+      return nameMatch && kitKatMatch && streakMatch && xpMatch;
+    });
+  
+    console.log('Filtered before sort:', filtered);
+  
+    const sorted = filtered.sort((a, b) => {
+      const { field, order } = sortConfig;
+      let comparison = 0;
+  
+      if (field === 'name') {
+        comparison = a.name.localeCompare(b.name);
+      } else if (field === 'kitKatPoints') {
+        comparison = a.kitKatPoints - b.kitKatPoints;
+      } else if (field === 'streak') {
+        comparison = a.streak - b.streak;
+      } else if (field === 'multiplier') {
+        comparison = calculateMultiplier(a.streak) - calculateMultiplier(b.streak);
+      } else if (field === 'xp') {
+        comparison = a.xp - b.xp;
+      }
+  
+      return order === 'asc' ? comparison : -comparison;
+    });
+  
+    console.log('Final sorted result:', sorted);
+    return sorted;
+  }, [students, searchTerm, sortConfig, filterConfig]);
+
+  console.log('Filtered students:', filteredStudents)
 
   const topStudents = useMemo(() => {
     return [...students].sort((a, b) => b.xp - a.xp).slice(0, TOP_STUDENTS_COUNT)
   }, [students])
 
-  const handleKitKatChange = useCallback((studentIds: number[], change: number) => {
+  const handleKitKatChange = useCallback(async (studentIds: number[], change: number) => {
     setUndoStack(prev => [...prev, students])
+    
+    // Update local state first for immediate feedback
     setStudents(prevStudents =>
       prevStudents.map(student => {
         if (studentIds.includes(student.id)) {
@@ -141,20 +194,46 @@ const StudentTable: React.FC = () => {
         return student
       })
     )
+  
+    // Update Supabase
+    try {
+      for (const studentId of studentIds) {
+        const student = students.find(s => s.id === studentId)
+        if (student) {
+          const newKitKatPoints = Math.max(0, student.kitKatPoints + change)
+          const newXP = Math.round(student.xp + (change * XP_PER_KIT_KAT * calculateMultiplier(student.streak)))
+          
+          const { error } = await supabase
+            .from('students')
+            .update({
+              kitKatPoints: newKitKatPoints,
+              xp: Math.max(0, newXP)
+            })
+            .eq('id', studentId)
+  
+          if (error) throw error
+        }
+      }
+    } catch (error) {
+      console.error('Error updating Kit Kat points:', error)
+    }
+  
     studentIds.forEach(id => {
       setShowAnimation({ id, change })
       setTimeout(() => setShowAnimation(null), 300)
     })
   }, [students])
 
-  const handleAttendance = useCallback((studentIds: number[]) => {
+  const handleAttendance = useCallback(async (studentIds: number[]) => {
     setUndoStack(prev => [...prev, students])
     const today = new Date()
+  
+    // Update local state first
     setStudents(prevStudents =>
       prevStudents.map(student => {
         if (studentIds.includes(student.id)) {
           const isConsecutive = student.lastAttendance &&
-            (today.getTime() - student.lastAttendance.getTime()) / (1000 * 3600 * 24) <= 1
+            (today.getTime() - new Date(student.lastAttendance).getTime()) / (1000 * 3600 * 24) <= 1
           return {
             ...student,
             streak: isConsecutive ? student.streak + 1 : 1,
@@ -164,15 +243,57 @@ const StudentTable: React.FC = () => {
         return student
       })
     )
+  
+    // Update Supabase
+    try {
+      for (const studentId of studentIds) {
+        const student = students.find(s => s.id === studentId)
+        if (student) {
+          const isConsecutive = student.lastAttendance &&
+            (today.getTime() - new Date(student.lastAttendance).getTime()) / (1000 * 3600 * 24) <= 1
+          
+          const { error } = await supabase
+            .from('students')
+            .update({
+              streak: isConsecutive ? student.streak + 1 : 1,
+              lastAttendance: today.toISOString()
+            })
+            .eq('id', studentId)
+  
+          if (error) throw error
+        }
+      }
+    } catch (error) {
+      console.error('Error updating attendance:', error)
+    }
   }, [students])
 
-  const resetStreak = useCallback((studentIds: number[]) => {
+  const resetStreak = useCallback(async (studentIds: number[]) => {
     setUndoStack(prev => [...prev, students])
+  
+    // Update local state first
     setStudents(prevStudents =>
       prevStudents.map(student =>
         studentIds.includes(student.id) ? { ...student, streak: 0, lastAttendance: null } : student
       )
     )
+  
+    // Update Supabase
+    try {
+      for (const studentId of studentIds) {
+        const { error } = await supabase
+          .from('students')
+          .update({
+            streak: 0,
+            lastAttendance: null
+          })
+          .eq('id', studentId)
+  
+        if (error) throw error
+      }
+    } catch (error) {
+      console.error('Error resetting streak:', error)
+    }
   }, [students])
 
   const undo = useCallback(() => {
@@ -327,14 +448,9 @@ const StudentTable: React.FC = () => {
     }
   }, [searchTerm])
 
-  const toggleDarkMode = () => {
-    setIsDarkMode(prev => !prev)
-    document.documentElement.classList.toggle('dark')
-  }
-
   return (
-    <div className={`p-4 overflow-x-auto ${isDarkMode ? 'dark' : ''}`} tabIndex={0} onKeyDown={handleKeyDownReact}>
-      <style jsx global>{`
+<div className="p-4 overflow-x-auto" tabIndex={0} onKeyDown={handleKeyDownReact}>
+  <style jsx global>{`
         :root {
           --background: 0 0% 100%;
           --foreground: 222.2 47.4% 11.2%;
@@ -358,131 +474,7 @@ const StudentTable: React.FC = () => {
           --ring: 215 20.2% 65.1%;
           --radius: 0.5rem;
         }
-
-        .dark {
-          --background: 224 71% 4%;
-          --foreground: 213 31% 91%;
-          --muted: 223 47% 11%;
-          --muted-foreground: 215.4 16.3% 56.9%;
-          --accent: 216 34% 17%;
-          --accent-foreground: 210 40% 98%;
-          --popover: 224 71% 4%;
-          --popover-foreground: 215 20.2% 65.1%;
-          --border: 216 34% 17%;
-          --input: 216 34% 17%;
-          --card: 224 71% 4%;
-          --card-foreground: 213 31% 91%;
-          --primary: 210 40% 98%;
-          --primary-foreground: 222.2 47.4% 1.2%;
-          --secondary: 222.2 47.4% 11.2%;
-          --secondary-foreground: 210 40% 98%;
-          --destructive: 0 63% 31%;
-          --destructive-foreground: 210 40% 98%;
-          --ring: 216 34% 17%;
-          --radius: 0.5rem;
-        }
       `}</style>
-      <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white p-6 rounded-lg shadow-lg mb-6">
-        <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="flex items-center gap-3">
-            <Zap className="h-10 w-10 text-yellow-300" />
-            <h1 className="text-3xl font-bold">Progress Dashboard</h1>
-          </div>
-          <div className="flex items-center gap-4 w-full md:w-auto">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="relative flex-1 md:w-96">
-                    <Input
-                      ref={searchInputRef}
-                      placeholder="Search students..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="pl-10 pr-10 bg-white/20 text-white placeholder:text-white/80 border-white/30 focus:bg-white/30 focus:placeholder:text-white/60"
-                    />
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-white/70" />
-                    {searchTerm && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="absolute right-2 top-1/2 transform -translate-y-1/2 text-white/70 hover:text-white"
-                        onClick={() => setSearchTerm('')}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  Press {isMac ? 'Cmd' : 'Ctrl'} + F to focus
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" size="icon" className="bg-white/10 border-white/20 text-white hover:bg-white/20">
-                  <Filter className="h-4 w-4" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-80">
-                <div className="space-y-4">
-                  <h3 className="font-medium">Filters</h3>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Min Kit Kat Points</label>
-                    <Slider
-                      min={0}
-                      max={20}
-                      step={1}
-                      value={[filterConfig.minKitKatPoints]}
-                      onValueChange={(value) => setFilterConfig(prev => ({ ...prev, minKitKatPoints: value[0] }))}
-                    />
-                    <div className="text-sm text-gray-500 dark:text-gray-400">{filterConfig.minKitKatPoints}</div>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Min Streak</label>
-                    <Slider
-                      min={0}
-                      max={30}
-                      step={1}
-                      value={[filterConfig.minStreak]}
-                      onValueChange={(value) => setFilterConfig(prev => ({ ...prev, minStreak: value[0] }))}
-                    />
-                    <div className="text-sm text-gray-500 dark:text-gray-400">{filterConfig.minStreak}</div>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Min XP</label>
-                    <Slider
-                      min={0}
-                      max={1000}
-                      step={50}
-                      value={[filterConfig.minXP]}
-                      onValueChange={(value) => setFilterConfig(prev => ({ ...prev, minXP: value[0] }))}
-                    />
-                    <div className="text-sm text-gray-500 dark:text-gray-400">{filterConfig.minXP}</div>
-                  </div>
-                </div>
-              </PopoverContent>
-            </Popover>
-
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="outline" size="icon" className="bg-white/10 border-white/20 text-white hover:bg-white/20" onClick={() => setShowShortcuts(true)}>
-                    <HelpCircle className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  Show Keyboard Shortcuts ({isMac ? 'Cmd' : 'Ctrl'} + /)
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-
-            <Button variant="outline" size="icon" className="bg-white/10 border-white/20 text-white hover:bg-white/20" onClick={toggleDarkMode}>
-              {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </Button>
-          </div>
-        </div>
-      </div>
 
       {selectedStudents.length > 0 && (
         <div className="mb-4 flex gap-2">
@@ -668,8 +660,9 @@ const StudentTable: React.FC = () => {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.5 }}
-                className={`${topStudents.includes(student) ? 'bg-amber-50 dark:bg-amber-900/30' : ''} ${index === focusedStudentIndex ? 'bg-blue-100 dark:bg-blue-900/30' : ''}`}
-              >
+                className={`${topStudents.includes(student) ? 'bg-amber-50' : ''} ${index === focusedStudentIndex ? 'bg-blue-100' : ''}`}
+
+                >
                 <TableCell>
                   <Checkbox
                     checked={selectedStudents.includes(student.id)}
@@ -708,7 +701,8 @@ const StudentTable: React.FC = () => {
                       <Button
                         variant="outline"
                         size="sm"
-                        className={`flex items-center gap-1 px-2 py-1 h-auto ${getKitKatPointColor(student.kitKatPoints, isDarkMode)}`}
+                        className={`flex items-center gap-1 px-2 py-1 h-auto ${getKitKatPointColor(student.kitKatPoints)}`}
+
                         onClick={() => handleKitKatChange([student.id], 1)}
                         onContextMenu={(e) => {
                           e.preventDefault()
@@ -818,8 +812,9 @@ const StudentTable: React.FC = () => {
                   </TooltipProvider>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="secondary" className="bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
-                    {student.xp} XP
+                <Badge variant="secondary" className="bg-purple-100 text-purple-800">
+
+{student.xp} XP
                   </Badge>
                 </TableCell>
               </motion.tr>
@@ -830,22 +825,24 @@ const StudentTable: React.FC = () => {
 
       {showShortcuts && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg max-w-md w-full">
-            <div className="flex justify-between items-center mb-4">
+<div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+<div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-semibold">Keyboard Shortcuts</h3>
               <Button variant="ghost" size="icon" onClick={() => setShowShortcuts(false)}>
                 <X className="h-4 w-4" />
               </Button>
             </div>
             <ul className="space-y-2">
-              <li><kbd className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">{isMac ? 'Cmd' : 'Ctrl'} + /</kbd> Show/Hide Shortcuts</li>
-              <li><kbd className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">{isMac ? 'Cmd' : 'Ctrl'} + F</kbd> Focus Search</li>
-              <li><kbd className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">{isMac ? 'Cmd' : 'Ctrl'} + ↑</kbd> / <kbd className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">{isMac ? 'Cmd' : 'Ctrl'} + ↓</kbd> Navigate Students</li>
-              <li><kbd className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">{isMac ? 'Cmd' : 'Ctrl'} + Enter</kbd> Select/Deselect Student</li>
-              <li><kbd className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">{isMac ? 'Cmd' : 'Ctrl'} + a</kbd> Mark Attendance</li>
-              <li><kbd className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">{isMac ? 'Cmd' : 'Ctrl'} + k</kbd> Add Kit Kat Point</li>
-              <li><kbd className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">{isMac ? 'Cmd' : 'Ctrl'} + r</kbd> Reset Streak</li>
-              <li><kbd className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">{isMac ? 'Cmd' : 'Ctrl'} + z</kbd> Undo Last Action</li>
+              <li><kbd className="bg-gray-100 px-2 py-1 rounded">{isMac ? 'Cmd' : 'Ctrl'} + /</kbd> Show/Hide Shortcuts</li>
+              <li><kbd className="bg-gray-100 px-2 py-1 rounded">{isMac ? 'Cmd' : 'Ctrl'} + F</kbd> Focus Search</li>
+              <li><kbd className="bg-gray-100 px-2 py-1 rounded">{isMac ? 'Cmd' : 'Ctrl'} + ↑</kbd> / <kbd className="bg-gray-100 px-2 py-1 rounded">
+
+{isMac ? 'Cmd' : 'Ctrl'} + ↓</kbd> Navigate Students</li>
+              <li><kbd className="bg-gray-100 px-2 py-1 rounded">{isMac ? 'Cmd' : 'Ctrl'} + Enter</kbd> Select/Deselect Student</li>
+              <li><kbd className="bg-gray-100 px-2 py-1 rounded">{isMac ? 'Cmd' : 'Ctrl'} + a</kbd> Mark Attendance</li>
+              <li><kbd className="bg-gray-100 px-2 py-1 rounded">{isMac ? 'Cmd' : 'Ctrl'} + k</kbd> Add Kit Kat Point</li>
+              <li><kbd className="bg-gray-100 px-2 py-1 rounded">{isMac ? 'Cmd' : 'Ctrl'} + r</kbd> Reset Streak</li>
+              <li><kbd className="bg-gray-100 px-2 py-1 rounded">{isMac ? 'Cmd' : 'Ctrl'} + z</kbd> Undo Last Action</li>
             </ul>
           </div>
         </div>
@@ -874,10 +871,10 @@ const StudentTable: React.FC = () => {
 }
 
 const getMultiplierColor = (multiplier: number) => {
-  if (multiplier < 2) return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
-  if (multiplier < 3) return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-  if (multiplier < 4) return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
-  return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+  if (multiplier < 2) return 'bg-blue-100 text-blue-800'
+  if (multiplier < 3) return 'bg-green-100 text-green-800'
+  if (multiplier < 4) return 'bg-yellow-100 text-yellow-800'
+  return 'bg-red-100 text-red-800'
 }
 
 const KitKatStudentTable = StudentTable
